@@ -1,90 +1,105 @@
-// PROJECT   :CHUMP_EEPROMBurner
-// PURPOSE   :To burn the code onto the EEPROM chip for CHUMP.
+// PROJECT   :CHUMP_ProgramEEPROMBurner
+// PURPOSE   :To burn the program data onto the program EEPROM for CHUMP.
 // COURSE    :ICS4U-E
 // AUTHOR    :William Xie
-// DATE      :2025 11 04
+// DATE      :2025 12 07
 // MCU       :328P
 // STATUS    :Working
 // REFERENCE :http://darcy.rsgc.on.ca/ACES/TEI4M/4BitComputer/index.html#PROGRAMEEPROM
 
-uint8_t dataPins[8] = {5, 6, 7, 8, 9, 10, 11, 12}; // Data pins
-uint8_t addrPins[4] = {A0, A1, A2, A3}; // Address pins
-uint8_t OE = 3;   // Output Enable pin
-uint8_t WE = 4;   // Write Enable pin
+uint8_t addrPins[5] = {A3, A2, A1, A0, A4}; // A4 = slide switch
+uint8_t dataPins[8] = { 5, 6, 7, 8, 9, 10, 11, 12 };
+uint8_t OE = 3;
+uint8_t WE = 4;
 
-// Instructions of the custom CHUMP program (in hexadecimal)
-byte programData[14] = {
+// 32 bytes total: two 16-byte programs
+uint8_t programData[32] = {
+  // PROGRAM 0 (Feinberg's Example Program) - addresses 0x00–0x0F
+  0x82, 0x10, 0x21, 0x62,
+  0xA0, 0x00, 0x00, 0x00,
+  0x00, 0x00, 0x00, 0x00,
+  0x00, 0x00, 0x00, 0x00,
+  // PROGRAM 1 (Custom CHUMP Program) - addresses 0x10–0x1F
   0x81, 0x10, 0x62, 0x80, 
   0x50, 0xEA, 0x84, 0x10, 
   0x65, 0xC0, 0x83, 0x10, 
-  0x65, 0xC0
+  0x65, 0xC0, 0x00, 0x00
 };
 
 void setup() {
   Serial.begin(9600);
-  // Set all pins defined as output pins
+  for (uint8_t i = 0; i < 5; i++) {
+    pinMode(addrPins[i], OUTPUT);
+  }
   for (uint8_t i = 0; i < 8; i++) {
     pinMode(dataPins[i], OUTPUT);
   }
-  for (uint8_t i = 0; i < 4; i++) {
-    pinMode(addrPins[i], OUTPUT);
-  }
   pinMode(OE, OUTPUT);
   pinMode(WE, OUTPUT);
-  digitalWrite(OE, HIGH);  // Disable output mode
-  digitalWrite(WE, HIGH);  // Disable write mode
-  Serial.println("Starting EEPROM write...");
-  delay(10);  // Short delay before writing begins
-  for (uint8_t addr = 0; addr < 14; addr++) {
-    writeEEPROM(addr, programData[addr]);  // Write each byte to its address
-    delay(10);  // Wait for EEPROM’s internal write cycle
+  digitalWrite(OE, HIGH);
+  digitalWrite(WE, HIGH);
+  Serial.println("Burning BOTH programs...");
+  delay(10);
+  burnEEPROM();
+  Serial.println("Verifying...");
+  if (verifyEEPROM()) {
+    Serial.println("Verification OK");
   }
-  Serial.println("Done!");
-  readEEPROM();  // Verify contents by reading back
+  else {
+    Serial.println("Verification FAILED");
+  }
 }
 
-void writeEEPROM(uint8_t address, byte data) { // Function to write a single byte to EEPROM
-  for (uint8_t i = 0; i < 4; i++) {
-    digitalWrite(addrPins[i], (address >> i) & 1);
+void burnEEPROM() {
+  for (uint8_t addr = 0; addr < 32; addr++) {
+    // Set A0–A4
+    for (uint8_t i = 0; i < 5; i++) {
+      digitalWrite(addrPins[i], (addr >> i) & 0x01);
+    }
+    // Set data
+    uint8_t data = programData[addr];
+    for (uint8_t i = 0; i < 8; i++) {
+      digitalWrite(dataPins[i], (data >> i) & 0x01);
+    }
+    digitalWrite(WE, LOW);
+    delayMicroseconds(1);
+    digitalWrite(WE, HIGH);
+    delay(10);
   }
+}
+
+boolean verifyEEPROM() {
+  boolean isValid = true;
   for (uint8_t i = 0; i < 8; i++) {
-    digitalWrite(dataPins[i], (data >> i) & 1);
+    pinMode(dataPins[i], INPUT);
   }
-  digitalWrite(OE, HIGH);         // Disable output mode during writing
-  digitalWrite(WE, LOW);          // Begin write
-  delayMicroseconds(1);           // Keep WE low long enough for the EEPROM to register the write
-  digitalWrite(WE, HIGH);         // End write
-  delay(10);                      // Allow EEPROM internal write cycle to finish
-}
-
-void readEEPROM() { // Function to read back EEPROM contents
-  Serial.println("Reading EEPROM:");
-  for (uint8_t addr = 0; addr < 14; addr++) {
-    for (uint8_t i = 0; i < 4; i++) {
-      digitalWrite(addrPins[i], (addr >> i) & 1);
+  digitalWrite(OE, LOW);
+  digitalWrite(WE, HIGH);
+  for (uint8_t addr = 0; addr < 32; addr++) {
+    for (uint8_t i = 0; i < 5; i++) {
+      digitalWrite(addrPins[i], (addr >> i) & 0x01);
     }
-    // Set data pins as input pins
+    delayMicroseconds(1);
+    uint8_t readByte = 0;
     for (uint8_t i = 0; i < 8; i++) {
-      pinMode(dataPins[i], INPUT);
+      if (digitalRead(dataPins[i])) {
+        readByte |= (1 << i);
+      }
     }
-    digitalWrite(OE, LOW);   // Enable output from EEPROM
-    digitalWrite(WE, HIGH);  // Disable write mode during reading
-    // Read 8 bits of data from EEPROM pins
-    byte value = 0;
-    for (uint8_t i = 0; i < 8; i++) {
-      value |= (digitalRead(dataPins[i]) << i);
-    }
-    // Print address and data value
     Serial.print("Addr ");
-    Serial.print(addr, HEX);
+    Serial.print(addr);
     Serial.print(": ");
-    Serial.println(value, HEX);
-    // Set data pins back to output pins
-    for (uint8_t i = 0; i < 8; i++) {
-      pinMode(dataPins[i], OUTPUT);
+    Serial.print(readByte, HEX);
+    if(readByte != programData[addr]){
+      Serial.println("  MISMATCH");
+      isValid = false;
+    }
+    else {
+      Serial.println("  OK");
     }
   }
-  digitalWrite(OE, HIGH); // Disable output mode after done reading
+  digitalWrite(OE, HIGH);
+  return isValid;
 }
 
 void loop() {} // Nothing to do
